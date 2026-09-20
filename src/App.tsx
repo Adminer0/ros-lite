@@ -19,6 +19,7 @@ import { Topbar } from './components/layout/Topbar';
 import { MobileNav } from './components/layout/MobileNav';
 import { ToastContainer, ToastMessage } from './components/ui/Toast';
 import { EvaluationGuideModal } from './components/demo/EvaluationGuideModal';
+import { NeonAuthModal } from './components/auth/NeonAuthModal';
 
 import { LandingPage } from './components/landing/LandingPage';
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -58,6 +59,10 @@ export function App() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [guideModalOpen, setGuideModalOpen] = useState(false);
+
+  // Neon Auth state
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   // Live Simulation State
   const [isSimulating, setIsSimulating] = useState(false);
@@ -216,6 +221,44 @@ export function App() {
     };
   }, [fetchData, audioEnabled, addToast]);
 
+  // Check active Neon Auth session on load
+  useEffect(() => {
+    api.getSession().then((session) => {
+      if (session && session.user) {
+        setCurrentUser(session.user);
+        if (session.user.role === 'OWNER' || session.user.role === 'MANAGER') {
+          setCurrentRole(session.user.role as UserRole);
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleLoginSuccess = (user: any) => {
+    setCurrentUser(user);
+    if (user.role) {
+      setCurrentRole(user.role as UserRole);
+    }
+    addToast({
+      title: 'Neon Auth Verified',
+      description: `Authenticated as ${user.username} (${user.role}). Full database privileges active.`,
+      type: 'success',
+    });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+      setCurrentUser(null);
+      addToast({
+        title: 'Signed Out',
+        description: 'Session ended in Neon database.',
+        type: 'info',
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Role change handler: automatically switches to worker's designated default view
   const handleChangeRole = (newRole: UserRole) => {
     setCurrentRole(newRole);
@@ -347,6 +390,15 @@ export function App() {
         isResetting={isResetting}
       />
 
+      {/* Neon Auth Sign-In Modal */}
+      <NeonAuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        currentUser={currentUser}
+        onAuthSuccess={handleLoginSuccess}
+        onLogout={handleLogout}
+      />
+
       {/* Mobile Drawer Navigation */}
       <MobileNav
         isOpen={mobileNavOpen}
@@ -367,6 +419,8 @@ export function App() {
         isLiveConnected={isLiveConnected}
         pendingKdsCount={pendingKdsCount}
         restaurantName={restaurant.name}
+        currentUser={currentUser}
+        onOpenAuthModal={() => setAuthModalOpen(true)}
       />
 
       {/* Main Body Column */}
@@ -386,6 +440,9 @@ export function App() {
           onChangeRole={handleChangeRole}
           audioEnabled={audioEnabled}
           onToggleAudio={() => setAudioEnabled(!audioEnabled)}
+          currentUser={currentUser}
+          onOpenAuthModal={() => setAuthModalOpen(true)}
+          isLiveConnected={isLiveConnected}
         />
 
         {/* Dynamic Route Content */}

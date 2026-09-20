@@ -28,6 +28,8 @@ interface SidebarProps {
   isLiveConnected: boolean;
   pendingKdsCount: number;
   restaurantName: string;
+  currentUser?: any | null;
+  onOpenAuthModal?: () => void;
 }
 
 interface SidebarNavItem {
@@ -53,6 +55,8 @@ export function Sidebar({
   isLiveConnected,
   pendingKdsCount,
   restaurantName,
+  currentUser = null,
+  onOpenAuthModal,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -243,7 +247,40 @@ export function Sidebar({
       </div>
 
       {/* Footer / Role & Live Status */}
-      <div className="border-t border-stone-800 p-3 space-y-2.5 bg-stone-950/40">
+      <div className="border-t border-stone-800 p-3 space-y-2 bg-stone-950/40">
+        {/* Neon Auth / User Session Row */}
+        {!collapsed ? (
+          <button
+            onClick={onOpenAuthModal}
+            className="w-full bg-stone-850 hover:bg-stone-800 p-2 rounded-lg border border-stone-800 flex items-center justify-between text-left transition-colors group"
+          >
+            <div className="flex items-center gap-2 overflow-hidden">
+              <div className="w-5 h-5 rounded bg-emerald-800 text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                {currentUser ? currentUser.username[0]?.toUpperCase() : 'N'}
+              </div>
+              <div className="truncate">
+                <span className="text-xs font-bold text-stone-200 group-hover:text-emerald-400 block truncate leading-tight">
+                  {currentUser ? currentUser.username : 'Neon Auth'}
+                </span>
+                <span className="text-[10px] text-stone-500 block truncate leading-tight">
+                  {currentUser ? `${currentUser.role} (Master)` : 'admin / yiic'}
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950 border border-emerald-800/80 px-1 py-0.5 rounded shrink-0">
+              {currentUser ? 'Active' : 'Login'}
+            </span>
+          </button>
+        ) : (
+          <button
+            onClick={onOpenAuthModal}
+            title={currentUser ? `User: ${currentUser.username}` : 'Neon Auth Sign In'}
+            className="w-8 h-8 rounded-lg bg-stone-850 hover:bg-stone-800 border border-stone-800 flex items-center justify-center mx-auto text-emerald-400 text-xs font-bold transition-colors"
+          >
+            {currentUser ? currentUser.username[0]?.toUpperCase() : 'N'}
+          </button>
+        )}
+
         {/* Role Selector */}
         {!collapsed ? (
           <div className="bg-stone-850 p-2 rounded-lg border border-stone-800 space-y-1">

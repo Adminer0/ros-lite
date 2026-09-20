@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Receipt,
   QrCode,
@@ -19,6 +19,7 @@ import { Card } from '../ui/Card';
 import { Dialog } from '../ui/Dialog';
 import { formatCurrency } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { gsapMotion } from '../../lib/animations';
 
 interface BillingViewProps {
   orders: Order[];
@@ -51,6 +52,9 @@ export function BillingView({
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccessNotice, setPaymentSuccessNotice] = useState<string | null>(null);
 
+  const receiptRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+
   // Set active order if passed from floor/orders
   useEffect(() => {
     if (selectedOrderId) {
@@ -62,6 +66,20 @@ export function BillingView({
       if (pending) setActiveOrder(pending);
     }
   }, [selectedOrderId, orders]);
+
+  // GSAP animation on active order change
+  useEffect(() => {
+    if (receiptRef.current && activeOrder) {
+      gsapMotion.unfoldReceipt(receiptRef.current);
+    }
+  }, [activeOrder?.id]);
+
+  // GSAP animation for payment success notice
+  useEffect(() => {
+    if (noticeRef.current && paymentSuccessNotice) {
+      gsapMotion.slideNotification(noticeRef.current);
+    }
+  }, [paymentSuccessNotice]);
 
   const handleSelectOrder = (ord: Order) => {
     setActiveOrder(ord);
@@ -122,7 +140,7 @@ export function BillingView({
       </div>
 
       {paymentSuccessNotice && (
-        <div className="bg-emerald-50 border-2 border-emerald-500 text-emerald-950 p-4 rounded-xl text-xs font-bold flex items-center justify-between shadow-xs animate-in zoom-in-95">
+        <div ref={noticeRef} className="bg-emerald-50 border-2 border-emerald-500 text-emerald-950 p-4 rounded-xl text-xs font-bold flex items-center justify-between shadow-xs">
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
             <span>{paymentSuccessNotice}</span>
@@ -209,7 +227,7 @@ export function BillingView({
         {/* Right: Invoice Preview & Payment Gate (7 cols) */}
         <div className="lg:col-span-7 bg-white rounded-xl border border-stone-200 p-5 space-y-4 shadow-xs">
           {activeOrder ? (
-            <div className="space-y-4">
+            <div ref={receiptRef} className="space-y-4">
               {/* Receipt Header */}
               <div className="flex items-start justify-between pb-3 border-b border-stone-200">
                 <div>

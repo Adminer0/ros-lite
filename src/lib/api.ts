@@ -216,6 +216,59 @@ export const api = {
     return res.json();
   },
 
+  // Auth & Neon Auth (admin/admin, yiic/yiic)
+  async getAuthInfo() {
+    const res = await fetch('/api/auth/info');
+    return res.json();
+  },
+
+  async login(username: string, password: string): Promise<{ success: boolean; user?: any; token?: string; error?: string }> {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Login failed');
+    }
+    if (data.token) {
+      localStorage.setItem('restos_auth_token', data.token);
+      localStorage.setItem('restos_auth_user', JSON.stringify(data.user));
+    }
+    return data;
+  },
+
+  async getSession(): Promise<{ user: any | null }> {
+    const token = localStorage.getItem('restos_auth_token');
+    if (!token) return { user: null };
+    try {
+      const res = await fetch('/api/auth/session', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return { user: null };
+      return res.json();
+    } catch {
+      return { user: null };
+    }
+  },
+
+  async logout(): Promise<void> {
+    const token = localStorage.getItem('restos_auth_token');
+    try {
+      if (token) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+      }
+    } finally {
+      localStorage.removeItem('restos_auth_token');
+      localStorage.removeItem('restos_auth_user');
+    }
+  },
+
   // Live Dining Simulation
   async simulateTick(): Promise<{ success: boolean; action: string; message: string }> {
     const res = await fetch('/api/simulate/tick', { method: 'POST' });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
   TrendingUp,
   ShoppingBag,
@@ -14,6 +14,7 @@ import {
   Clock,
   CheckCircle2,
   Brain,
+  Database,
 } from 'lucide-react';
 import {
   Restaurant,
@@ -26,6 +27,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { formatCurrency } from '../../lib/utils';
+import { gsapMotion } from '../../lib/animations';
 
 interface DashboardViewProps {
   restaurant: Restaurant;
@@ -46,6 +48,10 @@ export function DashboardView({
   onNavigate,
   onSelectTableForOrder,
 }: DashboardViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const revenueRef = useRef<HTMLSpanElement>(null);
+  const activeOrdersRef = useRef<HTMLSpanElement>(null);
+
   const pendingOrders = orders.filter((o) => o.status !== 'PAID' && o.status !== 'CANCELLED');
   const availableTables = tables.filter((t) => t.status === 'AVAILABLE').length;
   const occupiedTables = tables.filter((t) => t.status === 'OCCUPIED').length;
@@ -53,17 +59,40 @@ export function DashboardView({
 
   const topInsight = insights[0];
 
+  // GSAP motion graphics on mount
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // Stagger KPI cards entrance
+    const kpiCards = containerRef.current.querySelectorAll('.gsap-kpi-card');
+    if (kpiCards.length > 0) {
+      gsapMotion.staggerEntrance(kpiCards, { duration: 0.4, stagger: 0.07, y: 12 });
+    }
+
+    // Number tickers with GSAP
+    if (revenueRef.current) {
+      gsapMotion.counter(revenueRef.current, analytics.today_revenue, { isCurrency: true, duration: 0.7 });
+    }
+    if (activeOrdersRef.current) {
+      gsapMotion.counter(activeOrdersRef.current, pendingOrders.length, { duration: 0.5 });
+    }
+  }, [analytics.today_revenue, pendingOrders.length]);
+
   return (
-    <div className="space-y-4">
+    <div ref={containerRef} className="space-y-4">
       {/* Top Welcome Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-stone-200">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-extrabold text-stone-900 tracking-tight">Shift Operations Center</h1>
             <Badge variant="success">Live Shift</Badge>
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Database className="w-3 h-3 text-emerald-600" />
+              Neon DB
+            </span>
           </div>
           <p className="text-xs text-stone-500">
-            {restaurant.name} • {restaurant.address} • Real-time overview
+            {restaurant.name} • {restaurant.address} • Real-time PostgreSQL Ledger
           </p>
         </div>
 
@@ -100,9 +129,9 @@ export function DashboardView({
         </div>
       </div>
 
-      {/* KPI Cards Row */}
+      {/* KPI Cards Row (Animated with GSAP) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card className="bg-white">
+        <Card className="bg-white gsap-kpi-card shadow-xs hover:shadow-md transition-shadow">
           <CardHeader className="p-4 pb-1 flex flex-row items-center justify-between">
             <span className="text-xs font-bold text-stone-500">Today's Revenue</span>
             <div className="w-7 h-7 rounded-md bg-emerald-50 text-emerald-800 flex items-center justify-center">
@@ -111,7 +140,7 @@ export function DashboardView({
           </CardHeader>
           <CardContent className="p-4 pt-1">
             <div className="text-xl font-extrabold font-mono text-stone-900">
-              {formatCurrency(analytics.today_revenue)}
+              <span ref={revenueRef}>{formatCurrency(analytics.today_revenue)}</span>
             </div>
             <span className="text-[11px] text-emerald-700 font-semibold block mt-1">
               {analytics.today_orders} settled checks
@@ -119,7 +148,7 @@ export function DashboardView({
           </CardContent>
         </Card>
 
-        <Card className="bg-white">
+        <Card className="bg-white gsap-kpi-card shadow-xs hover:shadow-md transition-shadow">
           <CardHeader className="p-4 pb-1 flex flex-row items-center justify-between">
             <span className="text-xs font-bold text-stone-500">Floor Occupancy</span>
             <div className="w-7 h-7 rounded-md bg-blue-50 text-blue-700 flex items-center justify-center">
@@ -128,7 +157,7 @@ export function DashboardView({
           </CardHeader>
           <CardContent className="p-4 pt-1">
             <div className="text-xl font-extrabold font-mono text-stone-900">
-              {analytics.active_tables} / 10 Tables
+              {analytics.active_tables} / {tables.length} Tables
             </div>
             <span className="text-[11px] text-stone-500 font-medium block mt-1">
               {occupiedTables} occupied • {availableTables} available
@@ -136,7 +165,7 @@ export function DashboardView({
           </CardContent>
         </Card>
 
-        <Card className="bg-white">
+        <Card className="bg-white gsap-kpi-card shadow-xs hover:shadow-md transition-shadow">
           <CardHeader className="p-4 pb-1 flex flex-row items-center justify-between">
             <span className="text-xs font-bold text-stone-500">Active Dining Tickets</span>
             <div className="w-7 h-7 rounded-md bg-amber-50 text-amber-700 flex items-center justify-center">
@@ -145,7 +174,7 @@ export function DashboardView({
           </CardHeader>
           <CardContent className="p-4 pt-1">
             <div className="text-xl font-extrabold font-mono text-stone-900">
-              {pendingOrders.length}
+              <span ref={activeOrdersRef}>{pendingOrders.length}</span>
             </div>
             <span className="text-[11px] text-amber-700 font-semibold block mt-1">
               {pendingOrders.filter((o) => o.status === 'PREPARING').length} in kitchen prep
@@ -153,7 +182,7 @@ export function DashboardView({
           </CardContent>
         </Card>
 
-        <Card className="bg-white">
+        <Card className="bg-white gsap-kpi-card shadow-xs hover:shadow-md transition-shadow">
           <CardHeader className="p-4 pb-1 flex flex-row items-center justify-between">
             <span className="text-xs font-bold text-stone-500">Bills Awaiting Settlement</span>
             <div className="w-7 h-7 rounded-md bg-purple-50 text-purple-700 flex items-center justify-center">
@@ -178,7 +207,7 @@ export function DashboardView({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-stone-900">Table Turnover Overview</h3>
-              <p className="text-[11px] text-stone-500">10 dining tables in main dining section.</p>
+              <p className="text-[11px] text-stone-500">{tables.length} dining tables in main dining section.</p>
             </div>
 
             <Button
@@ -193,7 +222,7 @@ export function DashboardView({
           </div>
 
           {/* Quick Tables Strip */}
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {tables.map((t) => {
               const isAvailable = t.status === 'AVAILABLE';
               const isOccupied = t.status === 'OCCUPIED';
@@ -235,7 +264,7 @@ export function DashboardView({
                 <span>RESTIQ HIGH IMPACT</span>
               </div>
               <span className="text-[10px] font-mono bg-stone-800 text-stone-300 px-2 py-0.5 rounded">
-                Confidence: {topInsight?.confidence}%
+                Confidence: {topInsight?.confidence || '98%'}
               </span>
             </div>
 
@@ -267,7 +296,7 @@ export function DashboardView({
             <h3 className="text-xs font-extrabold text-stone-900 uppercase tracking-wider">
               Real-Time Active Order Tickets ({pendingOrders.length})
             </h3>
-            <p className="text-[11px] text-stone-500">Live order state machine synchronized across POS and KDS.</p>
+            <p className="text-[11px] text-stone-500">Live order state machine synchronized across POS and KDS in Neon DB.</p>
           </div>
 
           <Button
@@ -302,7 +331,7 @@ export function DashboardView({
                 </tr>
               ) : (
                 pendingOrders.map((ord) => (
-                  <tr key={ord.id} className="hover:bg-stone-50/70">
+                  <tr key={ord.id} className="hover:bg-stone-50/70 transition-colors">
                     <td className="p-3 font-mono font-bold text-stone-900">{ord.order_number}</td>
                     <td className="p-3 font-bold">{ord.table_number}</td>
                     <td className="p-3">

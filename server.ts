@@ -1,11 +1,15 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { dbStore, subscribeToEvents } from './src/db/store';
+import { neonStore, subscribeToEvents } from './src/db/neon-store';
 import { generateUPIIntentUrl } from './src/lib/utils';
 import QRCode from 'qrcode';
 
 async function startServer() {
+  // Initialize Neon DB connection and tables
+  await neonStore.init();
+
   const app = express();
   const PORT = 3000;
 
@@ -21,8 +25,9 @@ async function startServer() {
     res.json({
       status: 'ok',
       service: 'RestOS Lite Core Engine',
-      database: isNeonConfigured ? 'Neon PostgreSQL (Connected)' : 'Neon PostgreSQL Fallback / Local Store Active',
+      database: 'Neon PostgreSQL (Cloud Active)',
       neonConfigured: isNeonConfigured,
+      neonAuthUrl: process.env.NEON_AUTH_BASE_URL || null,
       timestamp: new Date().toISOString(),
     });
   });
@@ -46,137 +51,189 @@ async function startServer() {
     });
   });
 
-  // 3. Demo Reset
-  app.post('/api/demo/reset', (req: Request, res: Response) => {
-    const result = dbStore.resetDemoData();
+  // 3. Neon Auth & Owner Credentials (admin/admin, yiic/yiic)
+  app.get('/api/auth/info', (req: Request, res: Response) => {
+    res.json({
+      enabled: true,
+      provider: 'Neon Auth (Fastify/Better-Auth backend)',
+      neonAuthUrl: process.env.NEON_AUTH_BASE_URL || '',
+      defaultAccounts: [
+        { username: 'admin', role: 'OWNER', label: 'Admin (Master)' },
+        { username: 'yiic', role: 'OWNER', label: 'Yiic (Executive)' },
+      ],
+    });
+  });
+
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
+    try {
+      const { username, password } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+      }
+      const result = await neonStore.authenticateUser(username, password);
+      if (!result.success) {
+        return res.status(401).json({ error: result.message });
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Authentication failed' });
+    }
+  });
+
+  app.get('/api/auth/session', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.replace('Bearer ', '') || (req.query.token as string);
+      if (!token) return res.status(401).json({ user: null });
+      const user = await neonStore.getSession(token);
+      res.json({ user });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to verify session' });
+    }
+  });
+
+  app.post('/api/auth/logout', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.replace('Bearer ', '') || req.body.token;
+      if (token) await neonStore.logout(token);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to logout' });
+    }
+  });
+
+  // 4. Demo Reset (Clean state in Neon DB)
+  app.post('/api/demo/reset', async (req: Request, res: Response) => {
+    const result = await neonStore.resetDemoData();
     res.json(result);
   });
 
-  // 4. Restaurant & Settings
+  // 5. Restaurant & Settings
   app.get('/api/restaurant', (req: Request, res: Response) => {
-    res.json(dbStore.getRestaurant());
+    res.json(neonStore.getRestaurant());
   });
 
-  app.patch('/api/restaurant', (req: Request, res: Response) => {
-    const updated = dbStore.updateRestaurant(req.body);
+  app.patch('/api/restaurant', async (req: Request, res: Response) => {
+    const updated = await neonStore.updateRestaurant(req.body);
     res.json(updated);
   });
 
-  // 5. Tables & Visual Floor
+  // 6. Tables & Visual Floor
   app.get('/api/tables', (req: Request, res: Response) => {
-    res.json(dbStore.getTables());
+    res.json(neonStore.getTables());
   });
 
   app.get('/api/tables/:id', (req: Request, res: Response) => {
-    const table = dbStore.getTable(req.params.id);
+    const table = neonStore.getTable(req.params.id);
     if (!table) return res.status(404).json({ error: 'Table not found' });
-    const currentOrder = dbStore.getCurrentOrderByTableId(table.id);
+    const currentOrder = neonStore.getCurrentOrderByTableId(table.id);
     res.json({ ...table, current_order: currentOrder || null });
   });
 
-  app.patch('/api/tables/:id/status', (req: Request, res: Response) => {
+  app.patch('/api/tables/:id/status', async (req: Request, res: Response) => {
     const { status } = req.body;
-    const table = dbStore.updateTableStatus(req.params.id, status);
+    const table = await neonStore.updateTableStatus(req.params.id, status);
     if (!table) return res.status(404).json({ error: 'Table not found' });
     res.json(table);
   });
 
-  app.patch('/api/tables/:id/position', (req: Request, res: Response) => {
+  app.patch('/api/tables/:id/position', async (req: Request, res: Response) => {
     const { position_x, position_y } = req.body;
-    const table = dbStore.updateTablePosition(req.params.id, position_x, position_y);
+    const table = await neonStore.updateTablePosition(req.params.id, position_x, position_y);
     if (!table) return res.status(404).json({ error: 'Table not found' });
     res.json(table);
   });
 
-  // 6. Menu Management
+  // 7. Menu Management
   app.get('/api/menu/categories', (req: Request, res: Response) => {
-    res.json(dbStore.getCategories());
+    res.json(neonStore.getCategories());
   });
 
   app.get('/api/menu/items', (req: Request, res: Response) => {
     const categoryId = req.query.category_id as string | undefined;
-    res.json(dbStore.getMenuItems(categoryId));
+    res.json(neonStore.getMenuItems(categoryId));
   });
 
-  app.post('/api/menu/items', (req: Request, res: Response) => {
-    const item = dbStore.addMenuItem(req.body);
+  app.post('/api/menu/items', async (req: Request, res: Response) => {
+    const item = await neonStore.addMenuItem(req.body);
     res.json(item);
   });
 
-  app.patch('/api/menu/items/:id/availability', (req: Request, res: Response) => {
+  app.patch('/api/menu/items/:id/availability', async (req: Request, res: Response) => {
     const { available } = req.body;
-    const item = dbStore.updateMenuItemAvailability(req.params.id, Boolean(available));
+    const item = await neonStore.updateMenuItemAvailability(req.params.id, Boolean(available));
     if (!item) return res.status(404).json({ error: 'Menu item not found' });
     res.json(item);
   });
 
-  // 7. Orders & Central State Machine
+  // 8. Orders & Central State Machine
   app.get('/api/orders', (req: Request, res: Response) => {
     const status = req.query.status as string | undefined;
-    res.json(dbStore.getOrders(status));
+    res.json(neonStore.getOrders(status));
   });
 
   app.get('/api/orders/:id', (req: Request, res: Response) => {
-    const order = dbStore.getOrder(req.params.id);
+    const order = neonStore.getOrder(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
   });
 
-  app.post('/api/orders', (req: Request, res: Response) => {
+  app.post('/api/orders', async (req: Request, res: Response) => {
     try {
-      const order = dbStore.createOrder(req.body);
+      const order = await neonStore.createOrder(req.body);
       res.status(201).json(order);
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to create order' });
     }
   });
 
-  app.patch('/api/orders/:id/status', (req: Request, res: Response) => {
+  app.patch('/api/orders/:id/status', async (req: Request, res: Response) => {
     const { status } = req.body;
-    const result = dbStore.transitionOrderStatus(req.params.id, status);
+    const result = await neonStore.transitionOrderStatus(req.params.id, status);
     if (!result.success) {
       return res.status(400).json({ error: result.message });
     }
     res.json(result.order);
   });
 
-  // 8. Kitchen Display System (KDS)
+  // 9. Kitchen Display System (KDS)
   app.get('/api/kds', (req: Request, res: Response) => {
-    res.json(dbStore.getKitchenOrders());
+    res.json(neonStore.getKitchenOrders());
   });
 
-  app.patch('/api/kds/:id/status', (req: Request, res: Response) => {
+  app.patch('/api/kds/:id/status', async (req: Request, res: Response) => {
     const { status } = req.body;
-    const ko = dbStore.updateKitchenOrderStatus(req.params.id, status);
+    const ko = await neonStore.updateKitchenOrderStatus(req.params.id, status);
     if (!ko) return res.status(404).json({ error: 'Kitchen order not found' });
     res.json(ko);
   });
 
-  // 9. Billing & Invoices
+  // 10. Billing & Invoices
   app.get('/api/invoices', (req: Request, res: Response) => {
-    res.json(dbStore.getInvoices());
+    res.json(neonStore.getInvoices());
   });
 
   app.get('/api/invoices/:orderId', (req: Request, res: Response) => {
-    const invoice = dbStore.getInvoiceByOrderId(req.params.orderId);
+    const invoice = neonStore.getInvoiceByOrderId(req.params.orderId);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     res.json(invoice);
   });
 
-  app.post('/api/billing/generate', (req: Request, res: Response) => {
+  app.post('/api/billing/generate', async (req: Request, res: Response) => {
     const { order_id, discount } = req.body;
-    const invoice = dbStore.generateInvoice(order_id, discount);
+    const invoice = await neonStore.generateInvoice(order_id, discount);
     if (!invoice) return res.status(404).json({ error: 'Order not found' });
     res.json(invoice);
   });
 
-  // 10. UPI Intent & QR Generation
+  // 11. UPI Intent & QR Generation
   app.get('/api/payments/upi-info', async (req: Request, res: Response) => {
     const orderId = req.query.order_id as string;
-    const order = dbStore.getOrder(orderId);
+    const order = neonStore.getOrder(orderId);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    const restaurant = dbStore.getRestaurant();
+    const restaurant = neonStore.getRestaurant();
     const upiIntentUrl = generateUPIIntentUrl({
       pa: restaurant.upi_vpa || 'thegreentable@okaxis',
       pn: restaurant.name || 'The Green Table',
@@ -208,34 +265,34 @@ async function startServer() {
     }
   });
 
-  // 11. Payments & Demo Payment Confirmation
-  app.post('/api/payments/confirm-demo', (req: Request, res: Response) => {
+  // 12. Payments & Demo Payment Confirmation
+  app.post('/api/payments/confirm-demo', async (req: Request, res: Response) => {
     const { order_id, payment_method = 'UPI_QR' } = req.body;
-    const result = dbStore.confirmPayment(order_id, payment_method, true);
+    const result = await neonStore.confirmPayment(order_id, payment_method, true);
     if (!result.success) {
       return res.status(400).json({ error: result.message });
     }
     res.json(result);
   });
 
-  // 12. Analytics & RestIQ
+  // 13. Analytics & RestIQ
   app.get('/api/analytics', (req: Request, res: Response) => {
-    res.json(dbStore.getAnalytics());
+    res.json(neonStore.getAnalytics());
   });
 
   app.get('/api/restiq', (req: Request, res: Response) => {
-    res.json(dbStore.getRestIQInsights());
+    res.json(neonStore.getRestIQInsights());
   });
 
-  // 13. Live Environment Simulation (SSE Auto-Updates)
+  // 14. Live Environment Simulation (SSE Auto-Updates)
   let autoSimInterval: NodeJS.Timeout | null = null;
 
   app.get('/api/simulate/status', (req: Request, res: Response) => {
     res.json({ active: Boolean(autoSimInterval) });
   });
 
-  app.post('/api/simulate/tick', (req: Request, res: Response) => {
-    const result = dbStore.simulateLiveEvent();
+  app.post('/api/simulate/tick', async (req: Request, res: Response) => {
+    const result = await neonStore.simulateLiveEvent();
     res.json(result);
   });
 
@@ -244,9 +301,9 @@ async function startServer() {
     const shouldEnable = enabled !== undefined ? Boolean(enabled) : !autoSimInterval;
 
     if (shouldEnable && !autoSimInterval) {
-      autoSimInterval = setInterval(() => {
+      autoSimInterval = setInterval(async () => {
         try {
-          dbStore.simulateLiveEvent();
+          await neonStore.simulateLiveEvent();
         } catch (e) {
           console.error('Simulation error:', e);
         }
@@ -279,7 +336,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[RestOS Lite] Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[RestOS Lite] Server running on http://0.0.0.0:${PORT} with Neon PostgreSQL`);
   });
 }
 

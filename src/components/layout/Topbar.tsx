@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Zap,
   Play,
@@ -6,7 +6,6 @@ import {
   RotateCcw,
   Sparkles,
   Menu,
-  CheckCircle2,
   ChevronRight,
   HelpCircle,
   Volume2,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { UserRole } from '../../types';
+import { NeonAuthBadge } from '../auth/NeonAuthBadge';
 
 interface TopbarProps {
   currentRoute: string;
@@ -29,6 +29,9 @@ interface TopbarProps {
   onChangeRole: (role: UserRole) => void;
   audioEnabled: boolean;
   onToggleAudio: () => void;
+  currentUser?: any | null;
+  onOpenAuthModal?: () => void;
+  isLiveConnected?: boolean;
 }
 
 const ROUTE_LABELS: Record<string, { title: string; section: string }> = {
@@ -58,6 +61,9 @@ export function Topbar({
   onChangeRole,
   audioEnabled,
   onToggleAudio,
+  currentUser = null,
+  onOpenAuthModal = () => {},
+  isLiveConnected = true,
 }: TopbarProps) {
   const currentInfo = ROUTE_LABELS[currentRoute] || { title: 'RestOS Lite', section: 'App' };
 
@@ -81,8 +87,15 @@ export function Topbar({
         </div>
       </div>
 
-      {/* Right: Actions & Live Simulator Controls */}
+      {/* Right: Neon Auth Status, Actions & Live Simulator Controls */}
       <div className="flex items-center gap-2">
+        {/* Neon Auth & PostgreSQL Status Badge */}
+        <NeonAuthBadge
+          currentUser={currentUser}
+          onOpenAuthModal={onOpenAuthModal}
+          isLiveConnected={isLiveConnected}
+        />
+
         {/* Audio Chime Toggle */}
         <button
           onClick={onToggleAudio}
@@ -152,10 +165,10 @@ export function Topbar({
           onClick={onResetDemo}
           disabled={isResetting}
           className="h-8 text-xs font-semibold text-stone-500 hover:text-rose-700 hover:bg-rose-50 px-2.5"
-          title="Reset shift back to baseline Indiranagar restaurant data"
+          title="Reset shift back to clean state in Neon PostgreSQL database"
         >
           <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin text-rose-600' : ''}`} />
-          <span className="hidden xl:inline ml-1">{isResetting ? 'Resetting...' : 'Reset Shift'}</span>
+          <span className="hidden xl:inline ml-1">{isResetting ? 'Resetting...' : 'Reset'}</span>
         </Button>
       </div>
     </header>
