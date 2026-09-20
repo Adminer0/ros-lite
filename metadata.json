@@ -1,0 +1,6 @@
+{
+  "name": "RestOS Lite",
+  "description": "Lightweight restaurant operating system with QR ordering, visual floor management, POS, KDS, billing, UPI tracking, and RestIQ analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
