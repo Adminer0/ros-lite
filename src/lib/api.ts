@@ -215,4 +215,24 @@ export const api = {
     const res = await fetch('/api/restiq');
     return res.json();
   },
+
+  // Live Dining Simulation
+  async simulateTick(): Promise<{ success: boolean; action: string; message: string }> {
+    const res = await fetch('/api/simulate/tick', { method: 'POST' });
+    return res.json();
+  },
+
+  async toggleSimulation(enabled?: boolean): Promise<{ active: boolean; message?: string }> {
+    const res = await fetch('/api/simulate/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    return res.json();
+  },
+
+  async getSimulationStatus(): Promise<{ active: boolean }> {
+    const res = await fetch('/api/simulate/status');
+    return res.json();
+  },
 };

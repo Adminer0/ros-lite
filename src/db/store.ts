@@ -665,6 +665,81 @@ class RestaurantStore {
       },
     ];
   }
+
+  // 11. Live Operational Event Simulation
+  simulateLiveEvent(): { success: boolean; action: string; message: string } {
+    // 1. Check for any NEW kitchen order -> Advance to PREPARING
+    const newKitchenOrder = this.kitchenOrders.find((ko) => ko.status === 'NEW');
+    if (newKitchenOrder) {
+      this.updateKitchenOrderStatus(newKitchenOrder.id, 'PREPARING');
+      return {
+        success: true,
+        action: 'KITCHEN_PREPARING',
+        message: `Kitchen line started cooking Order #${newKitchenOrder.order_number} for Table ${newKitchenOrder.table_number}`,
+      };
+    }
+
+    // 2. Check for PREPARING kitchen order -> Advance to READY
+    const prepKitchenOrder = this.kitchenOrders.find((ko) => ko.status === 'PREPARING');
+    if (prepKitchenOrder) {
+      this.updateKitchenOrderStatus(prepKitchenOrder.id, 'READY');
+      return {
+        success: true,
+        action: 'KITCHEN_READY',
+        message: `Order #${prepKitchenOrder.order_number} (Table ${prepKitchenOrder.table_number}) is PLATED & READY for runner pickup!`,
+      };
+    }
+
+    // 3. Check for READY order that is not yet BILLED
+    const readyOrder = this.orders.find((o) => o.status === 'READY');
+    if (readyOrder) {
+      this.transitionOrderStatus(readyOrder.id, 'BILLED');
+      return {
+        success: true,
+        action: 'ORDER_BILLED',
+        message: `Bill generated for Table ${readyOrder.table_number} (Order #${readyOrder.order_number})`,
+      };
+    }
+
+    // 4. If table has available status, create a realistic new QR order
+    const availableTable = this.tables.find((t) => t.status === 'AVAILABLE');
+    if (availableTable) {
+      const sampleItems = [
+        { menu_item_id: 'item-1', quantity: 1, notes: 'Medium spice' },
+        { menu_item_id: 'item-13', quantity: 2 },
+        { menu_item_id: 'item-7', quantity: 1 },
+      ];
+      const newOrder = this.createOrder({
+        table_id: availableTable.id,
+        source: 'QR',
+        customer_name: 'Guest Diner',
+        items: sampleItems,
+      });
+
+      return {
+        success: true,
+        action: 'ORDER_CREATED',
+        message: `Customer scanned QR at Table ${availableTable.table_number} and placed Order #${newOrder.order_number}`,
+      };
+    }
+
+    // 5. If all tables busy and all billed, settle one payment to cycle table
+    const billedOrder = this.orders.find((o) => o.status === 'BILLED');
+    if (billedOrder) {
+      this.confirmPayment(billedOrder.id, 'UPI_INTENT', true);
+      return {
+        success: true,
+        action: 'PAYMENT_SETTLED',
+        message: `UPI payment settled for Table ${billedOrder.table_number} (₹${billedOrder.total}). Table is now FREE!`,
+      };
+    }
+
+    return {
+      success: true,
+      action: 'NOOP',
+      message: 'Restaurant floor operating normally.',
+    };
+  }
 }
 
 export const dbStore = new RestaurantStore();

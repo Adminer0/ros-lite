@@ -227,6 +227,40 @@ async function startServer() {
     res.json(dbStore.getRestIQInsights());
   });
 
+  // 13. Live Environment Simulation (SSE Auto-Updates)
+  let autoSimInterval: NodeJS.Timeout | null = null;
+
+  app.get('/api/simulate/status', (req: Request, res: Response) => {
+    res.json({ active: Boolean(autoSimInterval) });
+  });
+
+  app.post('/api/simulate/tick', (req: Request, res: Response) => {
+    const result = dbStore.simulateLiveEvent();
+    res.json(result);
+  });
+
+  app.post('/api/simulate/toggle', (req: Request, res: Response) => {
+    const { enabled } = req.body;
+    const shouldEnable = enabled !== undefined ? Boolean(enabled) : !autoSimInterval;
+
+    if (shouldEnable && !autoSimInterval) {
+      autoSimInterval = setInterval(() => {
+        try {
+          dbStore.simulateLiveEvent();
+        } catch (e) {
+          console.error('Simulation error:', e);
+        }
+      }, 12000);
+      return res.json({ active: true, message: 'Live dining shift simulator started (12s interval)' });
+    } else if (!shouldEnable && autoSimInterval) {
+      clearInterval(autoSimInterval);
+      autoSimInterval = null;
+      return res.json({ active: false, message: 'Live simulator paused' });
+    }
+
+    res.json({ active: Boolean(autoSimInterval) });
+  });
+
   // ----------------------------------------------------
   // Vite Middleware Setup
   // ----------------------------------------------------

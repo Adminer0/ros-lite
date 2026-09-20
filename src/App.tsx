@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Restaurant,
   RestaurantTable,
@@ -12,8 +13,13 @@ import {
   UserRole,
 } from './types';
 import { api } from './lib/api';
-import { Header } from './components/layout/Header';
-import { DemoWalkthroughBanner } from './components/demo/DemoWalkthroughBanner';
+import { soundManager } from './lib/sound';
+import { Sidebar } from './components/layout/Sidebar';
+import { Topbar } from './components/layout/Topbar';
+import { MobileNav } from './components/layout/MobileNav';
+import { ToastContainer, ToastMessage } from './components/ui/Toast';
+import { EvaluationGuideModal } from './components/demo/EvaluationGuideModal';
+
 import { LandingPage } from './components/landing/LandingPage';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { FloorPlanView } from './components/floor/FloorPlanView';
@@ -25,8 +31,22 @@ import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { RestiqView } from './components/restiq/RestiqView';
 import { SettingsView } from './components/settings/SettingsView';
 import { CustomerOrderView } from './components/customer/CustomerOrderView';
-import { ShieldAlert } from 'lucide-react';
-import { Button } from './components/ui/Button';
+
+const ROLE_ALLOWED_ROUTES: Record<UserRole, string[]> = {
+  OWNER: ['dashboard', 'floor', 'orders', 'kds', 'billing', 'menu', 'analytics', 'restiq', 'settings', 'landing', 'customer-order'],
+  MANAGER: ['dashboard', 'floor', 'orders', 'kds', 'menu', 'analytics', 'restiq', 'landing', 'customer-order'],
+  CASHIER: ['floor', 'orders', 'billing', 'landing', 'customer-order'],
+  KITCHEN: ['kds', 'landing', 'customer-order'],
+  WAITER: ['floor', 'orders', 'landing', 'customer-order'],
+};
+
+const ROLE_DEFAULT_ROUTE: Record<UserRole, string> = {
+  OWNER: 'dashboard',
+  MANAGER: 'dashboard',
+  CASHIER: 'billing',
+  KITCHEN: 'kds',
+  WAITER: 'floor',
+};
 
 export function App() {
   // Navigation & Role State
@@ -36,6 +56,16 @@ export function App() {
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [guideModalOpen, setGuideModalOpen] = useState(false);
+
+  // Live Simulation State
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [isSimulatingTick, setIsSimulatingTick] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(true);
+
+  // Real-time Toast Notifications
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   // Domain State
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
@@ -47,6 +77,18 @@ export function App() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [insights, setInsights] = useState<RestIQInsight[]>([]);
+
+  const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    setToasts((prev) => [...prev.slice(-3), { ...toast, id }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // Fetch all live data
   const fetchData = useCallback(async () => {
@@ -61,6 +103,7 @@ export function App() {
         invoicesData,
         analyticsData,
         insightsData,
+        simStatus,
       ] = await Promise.all([
         api.getRestaurant(),
         api.getTables(),
@@ -71,6 +114,7 @@ export function App() {
         api.getInvoices(),
         api.getAnalytics(),
         api.getRestIQ(),
+        api.getSimulationStatus().catch(() => ({ active: false })),
       ]);
 
       setRestaurant(restData);
@@ -82,17 +126,18 @@ export function App() {
       setInvoices(invoicesData);
       setAnalytics(analyticsData);
       setInsights(insightsData);
+      setIsSimulating(Boolean(simStatus.active));
       setInitialLoading(false);
     } catch (e) {
       console.error('Failed to fetch data:', e);
     }
   }, []);
 
-  // Initial load & SSE connection
+  // Server-Sent Events (SSE) Live Reactive Listener
   useEffect(() => {
     fetchData();
 
-    // Connect to Server-Sent Events
+    // Connect to SSE stream
     const eventSource = new EventSource('/api/events');
 
     eventSource.onopen = () => {
@@ -102,11 +147,63 @@ export function App() {
     eventSource.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data);
-        if (payload.type === 'STATE_UPDATED') {
+        if (!payload || !payload.type) return;
+
+        // Reactive state refresh for all ledger mutations
+        if (
+          [
+            'ORDER_CREATED',
+            'ORDER_UPDATED',
+            'KDS_UPDATED',
+            'TABLE_UPDATED',
+            'INVOICE_GENERATED',
+            'PAYMENT_CONFIRMED',
+            'DEMO_RESET',
+            'MENU_UPDATED',
+            'RESTAURANT_UPDATED',
+            'STATE_UPDATED',
+          ].includes(payload.type)
+        ) {
           fetchData();
         }
+
+        // Auditory chimes & visual real-time toasts
+        if (payload.type === 'ORDER_CREATED') {
+          if (audioEnabled) soundManager.playNewOrderChime();
+          const ord = payload.payload;
+          addToast({
+            title: `New Order #${ord.order_number || ''}`,
+            description: `Table ${ord.table_number || ''} placed an order for ₹${ord.total || 0}`,
+            type: 'kds',
+          });
+        } else if (payload.type === 'KDS_UPDATED') {
+          const ko = payload.payload?.kitchenOrder;
+          if (ko) {
+            if (ko.status === 'READY') {
+              if (audioEnabled) soundManager.playOrderReadyChime();
+              addToast({
+                title: `Order #${ko.order_number} Ready!`,
+                description: `Table ${ko.table_number} dishes are plated for serving.`,
+                type: 'success',
+              });
+            } else if (ko.status === 'PREPARING') {
+              addToast({
+                title: `KDS: Order #${ko.order_number} In Prep`,
+                description: `Kitchen cook started preparing Table ${ko.table_number} ticket.`,
+                type: 'info',
+              });
+            }
+          }
+        } else if (payload.type === 'PAYMENT_CONFIRMED') {
+          const payment = payload.payload;
+          addToast({
+            title: 'Payment Confirmed',
+            description: `Settlement completed. Table released to Available.`,
+            type: 'success',
+          });
+        }
       } catch (err) {
-        // keep-alive or malformed
+        // keep-alive or heartbeat
       }
     };
 
@@ -117,10 +214,26 @@ export function App() {
     return () => {
       eventSource.close();
     };
-  }, [fetchData]);
+  }, [fetchData, audioEnabled, addToast]);
 
-  // Navigate handler
+  // Role change handler: automatically switches to worker's designated default view
+  const handleChangeRole = (newRole: UserRole) => {
+    setCurrentRole(newRole);
+    const allowed = ROLE_ALLOWED_ROUTES[newRole] || [];
+    if (!allowed.includes(currentRoute)) {
+      const target = ROLE_DEFAULT_ROUTE[newRole] || 'dashboard';
+      setCurrentRoute(target);
+      setRouteParams({});
+    }
+  };
+
+  // Safe navigation handler
   const handleNavigate = (route: string, params: any = {}) => {
+    const allowed = ROLE_ALLOWED_ROUTES[currentRole] || [];
+    if (!allowed.includes(route)) {
+      // Auto-elevate role to OWNER if requested via a guide shortcut
+      setCurrentRole('OWNER');
+    }
     setCurrentRoute(route);
     setRouteParams(params);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -132,6 +245,11 @@ export function App() {
     try {
       await api.resetDemo();
       await fetchData();
+      addToast({
+        title: 'Shift Reset',
+        description: 'Ledger restored to baseline Indiranagar restaurant state.',
+        type: 'info',
+      });
       handleNavigate('dashboard');
     } catch (e) {
       console.error(e);
@@ -140,33 +258,59 @@ export function App() {
     }
   };
 
-  // Role permissions check
-  const checkRolePermission = (): boolean => {
-    if (currentRoute === 'landing' || currentRoute === 'customer-order') return true;
-    switch (currentRole) {
-      case 'OWNER':
-        return true;
-      case 'MANAGER':
-        return ['dashboard', 'floor', 'orders', 'kds', 'menu', 'analytics', 'restiq'].includes(currentRoute);
-      case 'CASHIER':
-        return ['floor', 'orders', 'billing'].includes(currentRoute);
-      case 'KITCHEN':
-        return ['kds'].includes(currentRoute);
-      case 'WAITER':
-        return ['floor', 'orders'].includes(currentRoute);
-      default:
-        return true;
+  // Simulation controls
+  const handleToggleSimulation = async () => {
+    try {
+      const next = !isSimulating;
+      const res = await api.toggleSimulation(next);
+      setIsSimulating(res.active);
+      addToast({
+        title: res.active ? '⚡ Live Traffic Enabled' : 'Live Traffic Paused',
+        description: res.active
+          ? 'Simulating realistic diner orders, kitchen prep, and bill requests every 12s.'
+          : 'Live operational simulation stopped.',
+        type: res.active ? 'kds' : 'info',
+      });
+    } catch (e) {
+      console.error(e);
     }
   };
 
+  const handleSimulateTick = async () => {
+    setIsSimulatingTick(true);
+    try {
+      const result = await api.simulateTick();
+      if (result.message) {
+        addToast({
+          title: 'Simulation Step',
+          description: result.message,
+          type: 'kds',
+        });
+      }
+      await fetchData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSimulatingTick(false);
+    }
+  };
+
+  // Guard against any invalid routes for the current worker role
+  useEffect(() => {
+    const allowed = ROLE_ALLOWED_ROUTES[currentRole] || [];
+    if (!allowed.includes(currentRoute)) {
+      setCurrentRoute(ROLE_DEFAULT_ROUTE[currentRole] || 'dashboard');
+    }
+  }, [currentRole, currentRoute]);
+
   if (initialLoading || !restaurant || !analytics) {
     return (
-      <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center p-4">
-        <div className="w-12 h-12 rounded-xl bg-emerald-800 text-white flex items-center justify-center font-extrabold text-xl shadow-md animate-pulse">
+      <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-4 text-white">
+        <div className="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-extrabold text-xl shadow-lg animate-bounce">
           R
         </div>
-        <h2 className="text-sm font-bold text-stone-900 mt-3">Initializing RestOS Lite Core Engine</h2>
-        <p className="text-xs text-stone-500 mt-0.5">Connecting to central ledger and table state...</p>
+        <h2 className="text-base font-extrabold text-stone-100 mt-4 tracking-tight">RestOS Lite</h2>
+        <p className="text-xs text-stone-400 mt-1 font-mono">Initializing continuous ledger & SSE connection...</p>
       </div>
     );
   }
@@ -186,144 +330,179 @@ export function App() {
     );
   }
 
-  const hasPermission = checkRolePermission();
+  const pendingKdsCount = kitchenOrders.filter((k) => k.status === 'NEW' || k.status === 'PREPARING').length;
 
   return (
-    <div className="min-h-screen bg-stone-100/60 text-stone-900 flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-950">
-      {/* 14-Step YIIC Demo Walkthrough Guide Banner */}
-      <DemoWalkthroughBanner
+    <div className="min-h-screen bg-stone-100/70 text-stone-900 flex font-sans selection:bg-emerald-100 selection:text-emerald-950">
+      {/* Real-time Toasts */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      {/* 10-Step Evaluation Checklist Modal */}
+      <EvaluationGuideModal
+        isOpen={guideModalOpen}
+        onClose={() => setGuideModalOpen(false)}
         currentRoute={currentRoute}
         onNavigate={handleNavigate}
         onResetDemo={handleResetDemo}
         isResetting={isResetting}
       />
 
-      {/* Main Staff Header with Role Switcher & Live Sync */}
-      <Header
+      {/* Mobile Drawer Navigation */}
+      <MobileNav
+        isOpen={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
         currentRoute={currentRoute}
         onNavigate={handleNavigate}
         currentRole={currentRole}
-        onChangeRole={(role) => setCurrentRole(role)}
-        restaurantName={restaurant.name}
-        isLiveConnected={isLiveConnected}
+        onChangeRole={handleChangeRole}
+        pendingKdsCount={pendingKdsCount}
       />
 
-      {/* Content Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
-        {!hasPermission ? (
-          /* Role Access Denied Guard */
-          <div className="bg-white rounded-xl border border-stone-200 p-8 text-center max-w-md mx-auto my-12 space-y-3 shadow-xs">
-            <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
-              <ShieldAlert className="w-6 h-6" />
-            </div>
-            <h2 className="text-base font-extrabold text-stone-900">Access Restricted for Role: {currentRole}</h2>
-            <p className="text-xs text-stone-500 leading-relaxed">
-              This module requires higher clearance. You can switch your role in the top-right header to OWNER or MANAGER to test this view.
-            </p>
-            <div className="pt-2">
-              <Button
-                size="sm"
-                onClick={() => setCurrentRole('OWNER')}
-                className="bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold"
+      {/* Left Sidebar Navigation Pane (Desktop/Tablet) */}
+      <Sidebar
+        currentRoute={currentRoute}
+        onNavigate={handleNavigate}
+        currentRole={currentRole}
+        onChangeRole={handleChangeRole}
+        isLiveConnected={isLiveConnected}
+        pendingKdsCount={pendingKdsCount}
+        restaurantName={restaurant.name}
+      />
+
+      {/* Main Body Column */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Uncluttered Topbar */}
+        <Topbar
+          currentRoute={currentRoute}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+          isSimulating={isSimulating}
+          onToggleSimulation={handleToggleSimulation}
+          onSimulateTick={handleSimulateTick}
+          isSimulatingTick={isSimulatingTick}
+          onResetDemo={handleResetDemo}
+          isResetting={isResetting}
+          onOpenGuide={() => setGuideModalOpen(true)}
+          currentRole={currentRole}
+          onChangeRole={handleChangeRole}
+          audioEnabled={audioEnabled}
+          onToggleAudio={() => setAudioEnabled(!audioEnabled)}
+        />
+
+        {/* Dynamic Route Content */}
+        <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentRoute}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.15 }}
+            >
+              {currentRoute === 'landing' && (
+                <LandingPage
+                  onLaunchDemo={() => handleNavigate('dashboard')}
+                  onOpenCustomerQr={() =>
+                    handleNavigate('customer-order', { restaurantId: restaurant.slug, tableId: 'table-5' })
+                  }
+                />
+              )}
+
+              {currentRoute === 'dashboard' && (
+                <DashboardView
+                  restaurant={restaurant}
+                  tables={tables}
+                  orders={orders}
+                  analytics={analytics}
+                  insights={insights}
+                  onNavigate={handleNavigate}
+                  onSelectTableForOrder={(tableId) => handleNavigate('orders', { tableId })}
+                />
+              )}
+
+              {currentRoute === 'floor' && (
+                <FloorPlanView
+                  tables={tables}
+                  orders={orders}
+                  onSelectTableForOrder={(tableId) => handleNavigate('orders', { tableId })}
+                  onNavigate={handleNavigate}
+                  onRefresh={fetchData}
+                />
+              )}
+
+              {currentRoute === 'orders' && (
+                <OrdersView
+                  categories={categories}
+                  menuItems={menuItems}
+                  tables={tables}
+                  orders={orders}
+                  initialTableId={routeParams.tableId}
+                  onNavigate={handleNavigate}
+                  onRefresh={fetchData}
+                />
+              )}
+
+              {currentRoute === 'kds' && (
+                <KdsView kitchenOrders={kitchenOrders} onRefresh={fetchData} />
+              )}
+
+              {currentRoute === 'menu' && (
+                <MenuView categories={categories} menuItems={menuItems} onRefresh={fetchData} />
+              )}
+
+              {currentRoute === 'billing' && (
+                <BillingView
+                  orders={orders}
+                  restaurant={restaurant}
+                  selectedOrderId={routeParams.orderId}
+                  onNavigate={handleNavigate}
+                  onRefresh={fetchData}
+                />
+              )}
+
+              {currentRoute === 'analytics' && <AnalyticsView analytics={analytics} />}
+
+              {currentRoute === 'restiq' && (
+                <RestiqView insights={insights} onNavigate={handleNavigate} />
+              )}
+
+              {currentRoute === 'settings' && (
+                <SettingsView
+                  restaurant={restaurant}
+                  tables={tables}
+                  onNavigate={handleNavigate}
+                  onRefresh={fetchData}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+
+        {/* Streamlined Footer */}
+        <footer className="border-t border-stone-200 bg-white py-3 text-xs text-stone-500">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+            <span className="font-bold text-stone-800">
+              RestOS Lite • Modern Restaurant Operating System
+            </span>
+            <div className="flex items-center gap-3 text-[11px] text-stone-400">
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Continuous SSE Sync
+              </span>
+              <span>•</span>
+              <span>UPI Intent Ready</span>
+              <span>•</span>
+              <button
+                onClick={() => setGuideModalOpen(true)}
+                className="text-emerald-800 font-bold hover:underline"
               >
-                Switch Role to OWNER
-              </Button>
+                Evaluation Checklist
+              </button>
             </div>
           </div>
-        ) : (
-          /* Active Route View */
-          <>
-            {currentRoute === 'landing' && (
-              <LandingPage
-                onLaunchDemo={() => handleNavigate('dashboard')}
-                onOpenCustomerQr={() =>
-                  handleNavigate('customer-order', { restaurantId: restaurant.slug, tableId: 'table-5' })
-                }
-              />
-            )}
-
-            {currentRoute === 'dashboard' && (
-              <DashboardView
-                restaurant={restaurant}
-                tables={tables}
-                orders={orders}
-                analytics={analytics}
-                insights={insights}
-                onNavigate={handleNavigate}
-                onSelectTableForOrder={(tableId) => handleNavigate('orders', { tableId })}
-              />
-            )}
-
-            {currentRoute === 'floor' && (
-              <FloorPlanView
-                tables={tables}
-                orders={orders}
-                onSelectTableForOrder={(tableId) => handleNavigate('orders', { tableId })}
-                onNavigate={handleNavigate}
-                onRefresh={fetchData}
-              />
-            )}
-
-            {currentRoute === 'orders' && (
-              <OrdersView
-                categories={categories}
-                menuItems={menuItems}
-                tables={tables}
-                orders={orders}
-                initialTableId={routeParams.tableId}
-                onNavigate={handleNavigate}
-                onRefresh={fetchData}
-              />
-            )}
-
-            {currentRoute === 'kds' && (
-              <KdsView kitchenOrders={kitchenOrders} onRefresh={fetchData} />
-            )}
-
-            {currentRoute === 'menu' && (
-              <MenuView categories={categories} menuItems={menuItems} onRefresh={fetchData} />
-            )}
-
-            {currentRoute === 'billing' && (
-              <BillingView
-                orders={orders}
-                restaurant={restaurant}
-                selectedOrderId={routeParams.orderId}
-                onNavigate={handleNavigate}
-                onRefresh={fetchData}
-              />
-            )}
-
-            {currentRoute === 'analytics' && <AnalyticsView analytics={analytics} />}
-
-            {currentRoute === 'restiq' && (
-              <RestiqView insights={insights} onNavigate={handleNavigate} />
-            )}
-
-            {currentRoute === 'settings' && (
-              <SettingsView
-                restaurant={restaurant}
-                tables={tables}
-                onNavigate={handleNavigate}
-                onRefresh={fetchData}
-              />
-            )}
-          </>
-        )}
-      </main>
-
-      {/* Global Minimal Footer */}
-      <footer className="border-t border-stone-200 bg-white py-3 text-center text-xs text-stone-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span className="font-semibold text-stone-700">
-            RestOS Lite • Lightweight Restaurant Operating System
-          </span>
-          <span className="text-[11px] text-stone-400">
-            YIIC 2026 Production Prototype • Unified Neon Ledger
-          </span>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 }
+
 export default App;
