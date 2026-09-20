@@ -7,13 +7,17 @@ import { generateUPIIntentUrl } from './src/lib/utils';
 import QRCode from 'qrcode';
 
 async function startServer() {
-  // Initialize Neon DB connection and tables
-  await neonStore.init();
-
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Initialize Neon DB connection and tables in background without blocking port 3000 ingress
+  neonStore.init().then(() => {
+    console.log('[Neon Store] PostgreSQL ledger initialized successfully.');
+  }).catch((e) => {
+    console.error('[Neon Store] Background init error:', e);
+  });
 
   // ----------------------------------------------------
   // API Routes (FIRST)
@@ -316,6 +320,15 @@ async function startServer() {
     }
 
     res.json({ active: Boolean(autoSimInterval) });
+  });
+
+  // ----------------------------------------------------
+  // API 404 Fallback - Always return JSON, NEVER HTML
+  // ----------------------------------------------------
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({
+      error: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+    });
   });
 
   // ----------------------------------------------------

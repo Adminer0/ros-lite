@@ -132,9 +132,10 @@ export function App() {
       setAnalytics(analyticsData);
       setInsights(insightsData);
       setIsSimulating(Boolean(simStatus.active));
-      setInitialLoading(false);
     } catch (e) {
       console.error('Failed to fetch data:', e);
+    } finally {
+      setInitialLoading(false);
     }
   }, []);
 
